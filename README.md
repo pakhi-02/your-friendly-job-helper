@@ -136,3 +136,6 @@ The CLI also prints:
 - Quality depends on the local model you use.
 - Always review and personalize generated text before applying.
 - If Ollama is down, fallback mode still produces usable drafts.
+
+
+#vibe coding to save time
