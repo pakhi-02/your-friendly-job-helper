@@ -1,195 +1,138 @@
-# 🤖 AI-Powered Job Searcher
+# Local LLM Resume Tailor + Cover Letter Writer
 
-An intelligent job search tool that uses AI to find and rank job postings that match your skills and preferences. Get relevant job opportunities with direct application links!
+This project is now LLM-based using local inference with Ollama.
 
-## ✨ Features
+Give it:
+- your resume (`.txt`, `.md`, `.pdf`, or `.docx`)
+- a job description (`.txt`, `.md`, `.pdf`, or `.docx`)
 
-- 🎯 **AI-Powered Matching**: Uses OpenAI GPT-4 to analyze jobs and match them to your profile
-- 🌐 **Multiple Job Sources**: Scrapes from Indeed, RemoteOK, and more
-- 📊 **Smart Ranking**: Jobs ranked by match score (0-100)
-- 🔗 **Direct Apply Links**: Get direct links to job applications
-- 💾 **Export Results**: Save results as JSON or CSV
-- ⚙️ **Customizable**: Configure your skills, desired roles, and preferences
+It generates:
+- tailored resume notes (`.md`)
+- a tailored cover letter draft (`.md`)
+- fit analysis output (`.json`)
 
-## 🚀 Quick Start
+## Features
 
-### Prerequisites
+- LLM-first writing flow for resume tailoring and cover letters
+- Local model support through Ollama (no paid API required)
+- PDF and DOCX parsing support
+- Heuristic fallback if Ollama is unavailable
+- Tone control for cover letters (`formal`, `concise`, `startup`)
+- Length control for cover letters (`short`, `medium`, `long`)
+- Local web interface for browser-based use
+- Dark-themed UI with recent-generation history panel
+- CLI mode and interactive mode
 
-- Python 3.8 or higher
-- OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
+## Quick Start
 
-### Installation
+### 1) Install dependencies
 
-1. **Clone the repository**:
-   ```bash
-   cd /Users/pakhichatterjee/ai-job-searcher/your_friendly_job_seaercher
-   ```
-
-2. **Create a virtual environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On macOS/Linux
-   # or
-   venv\Scripts\activate  # On Windows
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure your settings**:
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env` and add:
-   - Your OpenAI API key
-   - Your name
-   - Your skills (comma-separated)
-   - Desired job roles
-   - Preferred locations
-   - Experience level
-
-   Example:
-   ```env
-   OPENAI_API_KEY=sk-your-api-key-here
-   YOUR_NAME=John Doe
-   YOUR_SKILLS=Python,Machine Learning,AWS,Docker
-   DESIRED_ROLES=ML Engineer,Data Scientist,Backend Engineer
-   PREFERRED_LOCATIONS=Remote,San Francisco,New York
-   EXPERIENCE_LEVEL=Mid-Level
-   ```
-
-### Usage
-
-**Run the job searcher**:
 ```bash
-python main.py
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-The app will:
-1. Search for jobs across multiple platforms
-2. Analyze each job using AI
-3. Rank jobs by match score
-4. Display top matches in the terminal
-5. Save results to `jobs_output/` folder
+### 2) Install and run Ollama
 
-### Output
+Install Ollama: [https://ollama.com/download](https://ollama.com/download)
 
-Results are saved in the `jobs_output/` directory:
-- **JSON format**: Full job details with AI analysis
-- **CSV format**: Spreadsheet-friendly format for easy viewing
+Run Ollama server:
 
-## 📁 Project Structure
-
-```
-your_friendly_job_seaercher/
-├── main.py              # Main application entry point
-├── ai_matcher.py        # AI-powered job matching logic
-├── scrapers.py          # Job board scrapers
-├── config.py            # Configuration settings
-├── requirements.txt     # Python dependencies
-├── .env.example         # Environment variables template
-├── .env                 # Your actual config (create this)
-├── .gitignore          # Git ignore file
-└── jobs_output/        # Output directory (auto-created)
+```bash
+ollama serve
 ```
 
-## 🛠️ Customization
+Pull a model (in another terminal):
 
-### Adjust Search Keywords
-
-Edit `config.py` to modify search keywords:
-```python
-SEARCH_KEYWORDS = [
-    "software engineer",
-    "machine learning",
-    "your custom keyword"
-]
+```bash
+ollama pull llama3.2:3b
 ```
 
-### Change Match Score Threshold
+### 3) Configure environment
 
-Lower this to see more jobs, raise it to be more selective:
-```python
-MIN_MATCH_SCORE = 70  # Jobs scoring below this are filtered out
+```bash
+cp .env.example .env
 ```
 
-### Add More Job Boards
+Example `.env`:
 
-Create a new scraper class in `scrapers.py`:
-```python
-class YourJobBoardScraper(JobScraper):
-    def search_jobs(self, keyword, location="", max_results=50):
-        # Your scraping logic here
-        return jobs_list
+```env
+CANDIDATE_NAME=Your Name
+CANDIDATE_EMAIL=you@example.com
+CANDIDATE_PHONE=+1-000-000-0000
+CANDIDATE_LOCATION=City, Country
+CANDIDATE_LINKEDIN=https://linkedin.com/in/your-profile
+CANDIDATE_PORTFOLIO=https://your-portfolio.dev
+
+OUTPUT_DIR=application_docs
+TOP_KEYWORDS=20
+MIN_KEYWORD_LENGTH=3
+MAX_INPUT_CHARS=12000
+
+USE_LLM=true
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2:3b
+LLM_TIMEOUT_SECONDS=120
+LLM_TEMPERATURE=0.3
+COVER_LETTER_TONE=formal
+COVER_LETTER_LENGTH=medium
 ```
 
-## 📊 How It Works
+### 4) Run in CLI mode
 
-1. **Scraping**: The app searches multiple job boards using your configured keywords
-2. **Deduplication**: Removes duplicate postings
-3. **AI Analysis**: Each job is analyzed by GPT-4 which:
-   - Compares job requirements with your skills
-   - Evaluates location and role fit
-   - Generates a match score (0-100)
-   - Provides reasoning for the score
-   - Recommends: "apply", "consider", or "skip"
-4. **Ranking**: Jobs are sorted by match score
-5. **Output**: Top matches displayed and saved to files
+```bash
+python main.py \
+  --resume-file resume.pdf \
+  --job-file job_description.docx \
+  --company "Acme Inc" \
+  --role "Software Engineer" \
+  --tone startup \
+  --length short
+```
 
-## 🔒 Privacy & API Usage
+### 5) Run in interactive mode
 
-- Your profile data stays local - only sent to OpenAI for job matching
-- Each job analysis costs ~$0.001-0.002 (GPT-4 API pricing)
-- For 50 jobs, expect ~$0.05-0.10 in API costs
+```bash
+python main_simple.py
+```
 
-## ⚠️ Important Notes
+Tone options:
+- `formal` (default)
+- `concise`
+- `startup`
 
-- **Rate Limiting**: Some job boards may block rapid requests. The app includes delays to be respectful.
-- **Website Changes**: Job board HTML structures change frequently. Scrapers may need updates.
-- **Authentication**: Some sites (like LinkedIn) require login for full access.
-- **Legal**: Ensure your use complies with each website's Terms of Service.
+Length options:
+- `short`
+- `medium` (default)
+- `long`
 
-## 🤝 Contributing
+### 6) Run web interface
 
-Feel free to:
-- Add new job board scrapers
-- Improve AI matching prompts
-- Enhance the UI/output format
-- Fix bugs or optimize code
+```bash
+python web_app.py
+```
 
-## 📝 License
+Then open [http://127.0.0.1:5000](http://127.0.0.1:5000).
+After generation, use the in-page download links to save notes, cover letter, and analysis.
 
-This project is for educational and personal use.
+## Output
 
-## 🆘 Troubleshooting
+Files are generated under `application_docs/` (or your `OUTPUT_DIR`):
+- `tailored_resume_notes_*.md`
+- `cover_letter_*.md`
+- `fit_analysis_*.json`
 
-**No jobs found?**
-- Check your internet connection
-- Try different keywords in `config.py`
-- Some job boards may block scrapers - this is expected
+The CLI also prints:
+- `Generation mode: llm` when Ollama is reachable
+- `Generation mode: fallback` when it is not
+- Selected cover letter tone
+- Selected cover letter length
 
-**API errors?**
-- Verify your OpenAI API key in `.env`
-- Check you have API credits available
-- Ensure you're using a valid model (gpt-4 or gpt-3.5-turbo)
 
-**Low match scores?**
-- Adjust `MIN_MATCH_SCORE` in `config.py`
-- Update your skills/preferences in `.env`
-- Review the AI's reasoning to understand mismatches
+## Notes
 
-## 🎯 Roadmap
-
-- [ ] Add LinkedIn scraper with authentication
-- [ ] Email notifications for new high-match jobs
-- [ ] Web UI dashboard
-- [ ] More job boards (Glassdoor, AngelList, etc.)
-- [ ] Resume matching and tailoring suggestions
-- [ ] Application tracking system
-
----
-
-Happy job hunting! 🚀
+- Quality depends on the local model you use.
+- Always review and personalize generated text before applying.
+- If Ollama is down, fallback mode still produces usable drafts.

@@ -34,8 +34,7 @@ ENV/
 *.swp
 *.swo
 
-# Output files
+# Generated output files
+application_docs/
 jobs_output/
-*.csv
-*.json
 *.log
