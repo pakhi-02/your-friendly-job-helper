@@ -1,0 +1,59 @@
+# Local/hosted stack: Caddy (HTTPS) -> web app -> local Ollama model server.
+#
+#   docker compose up --build -d
+#   docker compose exec ollama ollama pull llama3.2:3b   # one-time model pull
+#   open https://localhost                               # via Caddy (or http://localhost:5000 direct)
+#
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  web:
+    build: .
+    # Exposed on localhost only; Caddy is the public front door (ports 80/443).
+    ports:
+      - "127.0.0.1:5000:5000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Inside the compose network, reach Ollama by its service name, not localhost.
+      OLLAMA_BASE_URL: http://ollama:11434
+      APPLY_HEADLESS: "true"
+      FLASK_HOST: 0.0.0.0
+    volumes:
+      # Persist generated docs + screenshots outside the container.
+      - ./application_docs:/app/application_docs
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Defaults if not set in .env. Point DOMAIN at your real domain when hosting.
+      DOMAIN: ${DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  caddy_data:
+  caddy_config:

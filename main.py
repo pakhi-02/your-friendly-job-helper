@@ -137,6 +137,16 @@ def parse_args() -> argparse.Namespace:
         choices=SUPPORTED_LENGTHS,
         help="Cover letter length",
     )
+    parser.add_argument(
+        "--apply-url",
+        default="",
+        help="If set, auto-fill this application page with the generated cover letter after generating.",
+    )
+    parser.add_argument(
+        "--submit",
+        action="store_true",
+        help="With --apply-url, actually click submit (overrides AUTO_SUBMIT). Off = fill + screenshot only.",
+    )
     return parser.parse_args()
 
 
@@ -166,6 +176,26 @@ def main() -> None:
     if result["generation_mode"] != "llm":
         print(f"LLM status: {result['llm_status']}")
         print("Tip: start Ollama and pull a model to enable LLM generation.")
+
+    if args.apply_url:
+        from auto_apply import auto_apply  # lazy import (pulls in Playwright)
+
+        print(f"\nAuto-applying at: {args.apply_url}")
+        apply_result = auto_apply(
+            url=args.apply_url,
+            resume_path=args.resume_file,
+            cover_letter_path=result["cover_letter_path"],
+            company=args.company,
+            role=args.role,
+            auto_submit=True if args.submit else None,
+        )
+        print(f"Filled {len(apply_result.filled_fields)} field(s); "
+              f"{len(apply_result.skipped_fields)} need attention.")
+        if apply_result.screenshot_path:
+            print(f"Screenshot: {apply_result.screenshot_path}")
+        print(f"Submitted: {apply_result.submitted}")
+        if apply_result.error:
+            print(f"Apply error: {apply_result.error}")
 
 
 if __name__ == "__main__":

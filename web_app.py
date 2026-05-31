@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import hmac
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, abort, render_template_string, request, send_file, url_for
+from flask import Flask, Response, abort, render_template_string, request, send_file, url_for
 
 from config import (
+    APP_PASSWORD,
+    APP_USERNAME,
     CANDIDATE_PROFILE,
     COVER_LETTER_LENGTH,
     COVER_LETTER_TONE,
+    FLASK_DEBUG,
+    FLASK_HOST,
+    FLASK_PORT,
     OLLAMA_MODEL,
     OUTPUT_DIR,
 )
@@ -21,6 +28,27 @@ from llm_client import LocalLLMClient
 from main import generate_application_documents
 
 app = Flask(__name__)
+
+
+@app.before_request
+def _require_basic_auth():
+    """Gate every request behind HTTP Basic Auth when APP_PASSWORD is set."""
+    if not APP_PASSWORD:
+        return None  # auth disabled (e.g. local development)
+    auth = request.authorization
+    if (
+        auth
+        and auth.username == APP_USERNAME
+        and hmac.compare_digest(auth.password or "", APP_PASSWORD)
+    ):
+        return None
+    return Response(
+        "Authentication required.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="Your Friendly Job Helper"'},
+    )
+
+
 DOWNLOAD_BUNDLES: dict[str, dict[str, str]] = {}
 GENERATION_HISTORY: list[dict[str, str]] = []
 MAX_DOWNLOAD_BUNDLES = 50
@@ -329,6 +357,29 @@ PAGE_TEMPLATE = """
       </form>
     </section>
 
+    {% if apply_result %}
+      <section class="card">
+        <h2 style="margin-top: 0;">Auto-Apply Result</h2>
+        <div class="metrics">
+          <div class="metric"><div class="k">Filled</div><div class="v">{{ apply_result.filled_fields|length }}</div></div>
+          <div class="metric"><div class="k">Needs Attention</div><div class="v">{{ apply_result.skipped_fields|length }}</div></div>
+          <div class="metric"><div class="k">LLM Answered</div><div class="v">{{ apply_result.llm_answered|length }}</div></div>
+          <div class="metric"><div class="k">Submitted</div><div class="v">{{ 'Yes' if apply_result.submitted else 'No' }}</div></div>
+        </div>
+        {% if apply_result.screenshot_path %}
+          <div class="path-list"><strong>Screenshot:</strong> {{ apply_result.screenshot_path }}</div>
+        {% endif %}
+        {% if apply_result.filled_fields %}
+          <div class="preview-head" style="margin-top:10px;"><h3>Filled Fields</h3></div>
+          <pre>{{ apply_result.filled_fields|join('\n') }}</pre>
+        {% endif %}
+        {% if apply_result.skipped_fields %}
+          <div class="preview-head" style="margin-top:10px;"><h3>Skipped / Needs Attention</h3></div>
+          <pre>{{ apply_result.skipped_fields|join('\n') }}</pre>
+        {% endif %}
+      </section>
+    {% endif %}
+
     {% if history_entries %}
       <section class="card">
         <h2 style="margin-top: 0;">Recent Generations</h2>
@@ -376,6 +427,23 @@ PAGE_TEMPLATE = """
           <div><strong>Cover letter:</strong> {{ result.cover_letter_path }}</div>
           <div><strong>Analysis:</strong> {{ result.analysis_path }}</div>
         </div>
+
+        {% if download_id %}
+          <form method="post" action="{{ url_for('apply_job', download_id=download_id) }}" style="margin-top: 16px;">
+            <div class="field full">
+              <label for="apply_url">Auto-apply to a job URL</label>
+              <input id="apply_url" type="text" name="apply_url" placeholder="https://boards.greenhouse.io/acme/jobs/123456" />
+            </div>
+            <label style="display:flex; align-items:center; gap:8px; margin:10px 0; font-weight:500;">
+              <input type="checkbox" name="apply_submit" style="width:auto;" />
+              Submit automatically (leave off to just fill + screenshot for review)
+            </label>
+            <button class="btn-primary" type="submit">Auto-Apply</button>
+            <div class="status-text" style="margin-top:8px;">
+              A browser window opens and fills the form. Uses your generated cover letter and uploaded resume.
+            </div>
+          </form>
+        {% endif %}
       </section>
 
       <section class="card">
@@ -459,13 +527,31 @@ def _load_preview(path: str, limit_chars: int = 5000) -> str:
         return file.read(limit_chars)
 
 
-def _register_download_bundle(result: dict[str, str]) -> str:
-    """Store generated files for secure download links."""
+def _register_download_bundle(
+    result: dict[str, str],
+    resume_path: str = "",
+    company: str = "",
+    role: str = "",
+) -> str:
+    """Store generated files (and a persistent resume copy) for later use."""
     download_id = uuid4().hex
+    # The uploaded resume is a temp file that gets deleted after generation, but
+    # auto-apply needs to re-upload it, so copy it next to the generated docs.
+    persisted_resume = ""
+    if resume_path and os.path.exists(resume_path):
+        output_dir = os.path.dirname(result["cover_letter_path"]) or OUTPUT_DIR
+        persisted_resume = os.path.join(output_dir, f"resume_{download_id}{Path(resume_path).suffix}")
+        try:
+            shutil.copyfile(resume_path, persisted_resume)
+        except OSError:
+            persisted_resume = ""
     DOWNLOAD_BUNDLES[download_id] = {
         "notes": result["notes_path"],
         "cover": result["cover_letter_path"],
         "analysis": result["analysis_path"],
+        "resume": persisted_resume,
+        "company": company,
+        "role": role,
     }
     if len(DOWNLOAD_BUNDLES) > MAX_DOWNLOAD_BUNDLES:
         oldest_key = next(iter(DOWNLOAD_BUNDLES))
@@ -493,6 +579,73 @@ def _push_history_entry(
     }
     GENERATION_HISTORY.insert(0, entry)
     del GENERATION_HISTORY[MAX_HISTORY_ITEMS:]
+
+
+def render_page(**overrides):
+    """Render the page with sensible defaults for every template variable."""
+    llm_ok, _ = LocalLLMClient().check_health()
+    context = {
+        "error": "",
+        "info": "",
+        "result": None,
+        "download_id": "",
+        "cover_letter_preview": "",
+        "resume_notes_preview": "",
+        "company": "",
+        "role": "",
+        "candidate_name": CANDIDATE_PROFILE["name"],
+        "job_description_text": "",
+        "tones": SUPPORTED_TONES,
+        "lengths": SUPPORTED_LENGTHS,
+        "selected_tone": normalize_tone(COVER_LETTER_TONE),
+        "selected_length": normalize_length(COVER_LETTER_LENGTH),
+        "output_dir": OUTPUT_DIR,
+        "url_for": url_for,
+        "llm_ok": llm_ok,
+        "model_name": OLLAMA_MODEL,
+        "supported_formats": ", ".join(sorted(SUPPORTED_EXTENSIONS)),
+        "history_entries": GENERATION_HISTORY,
+        "apply_result": None,
+    }
+    context.update(overrides)
+    return render_template_string(PAGE_TEMPLATE, **context)
+
+
+@app.route("/apply/<download_id>", methods=["POST"])
+def apply_job(download_id: str):
+    """Auto-fill (and optionally submit) an application using a generated bundle."""
+    from auto_apply import auto_apply  # lazy import (pulls in Playwright)
+
+    bundle = DOWNLOAD_BUNDLES.get(download_id)
+    if not bundle:
+        return render_page(error="That generation has expired. Please generate documents again.")
+
+    url = request.form.get("apply_url", "").strip()
+    do_submit = request.form.get("apply_submit") == "on"
+    if not url:
+        return render_page(error="Enter the application page URL to auto-apply.")
+    if not bundle.get("resume") or not os.path.exists(bundle["resume"]):
+        return render_page(error="The resume for this generation is no longer available. Re-generate first.")
+
+    try:
+        apply_result = auto_apply(
+            url=url,
+            resume_path=bundle["resume"],
+            cover_letter_path=bundle["cover"],
+            company=bundle.get("company", ""),
+            role=bundle.get("role", ""),
+            auto_submit=True if do_submit else None,
+        )
+    except Exception as exc:  # keep the page alive on automation failures
+        return render_page(error=f"Auto-apply failed: {exc}")
+
+    if apply_result.submitted:
+        info = "Application submitted."
+    elif apply_result.error:
+        info = f"Auto-apply finished with an issue: {apply_result.error}"
+    else:
+        info = "Form filled and screenshot saved. Review it, then submit (check the box to auto-submit)."
+    return render_page(info=info, apply_result=apply_result)
 
 
 @app.route("/download/<download_id>/<file_key>", methods=["GET"])
@@ -567,7 +720,9 @@ def index():
                     tone=selected_tone,
                     length=selected_length,
                 )
-                download_id = _register_download_bundle(result)
+                download_id = _register_download_bundle(
+                    result, resume_path=resume_path, company=company, role=role
+                )
                 _push_history_entry(
                     download_id=download_id,
                     company=company,
@@ -587,8 +742,7 @@ def index():
                     if path and os.path.exists(path):
                         os.remove(path)
 
-    return render_template_string(
-        PAGE_TEMPLATE,
+    return render_page(
         error=error,
         info=info,
         result=result,
@@ -599,18 +753,12 @@ def index():
         role=role,
         candidate_name=candidate_name,
         job_description_text=job_description_text,
-        tones=SUPPORTED_TONES,
-        lengths=SUPPORTED_LENGTHS,
         selected_tone=selected_tone,
         selected_length=selected_length,
         output_dir=output_dir,
-        url_for=url_for,
         llm_ok=llm_ok,
-        model_name=OLLAMA_MODEL,
-        supported_formats=", ".join(sorted(SUPPORTED_EXTENSIONS)),
-        history_entries=GENERATION_HISTORY,
     )
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)

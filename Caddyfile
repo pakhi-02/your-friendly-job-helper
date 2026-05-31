@@ -1,0 +1,11 @@
+# Caddy reverse proxy with automatic HTTPS.
+# DOMAIN and ACME_EMAIL come from the environment (see .env).
+# - Real domain (e.g. jobs.example.com): Caddy fetches a free Let's Encrypt cert.
+# - localhost: Caddy serves a locally-trusted self-signed cert.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	reverse_proxy web:5000
+}
